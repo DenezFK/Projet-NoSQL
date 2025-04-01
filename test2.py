@@ -14,7 +14,7 @@ def load_data():
 
 st.title("🎬 Gestion des Films - NoSQL")
 
-# 📊 Affichage des films actuels dans MongoDB
+# 🌊 Affichage des films actuels dans MongoDB
 st.subheader("📋 Liste des Films (MongoDB)")
 df = load_data()
 st.dataframe(df)
@@ -80,7 +80,7 @@ with st.form("insert_form_neo4j"):
         st.success(f"Film '{title}' ajouté ✅")
         st.experimental_rerun()
 
-# 📌 Mise à jour d'un film dans Neo4j
+# 🕊️ Mise à jour d'un film dans Neo4j
 st.subheader("✏️ Mettre à jour un Film (Neo4j)")
 with st.form("update_form_neo4j"):
     old_title = st.text_input("Titre du Film à modifier")
@@ -94,7 +94,7 @@ with st.form("update_form_neo4j"):
         st.success("Film mis à jour ✅")
         st.experimental_rerun()
 
-# 📌 Supprimer un film dans Neo4j
+# 🗑️ Supprimer un film dans Neo4j
 st.subheader("🗑️ Supprimer un Film (Neo4j)")
 with st.form("delete_form_neo4j"):
     delete_title = st.text_input("Titre du Film à supprimer")
