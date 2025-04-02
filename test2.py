@@ -1,57 +1,71 @@
 import streamlit as st
 from pymongo import MongoClient
-from neo4j import GraphDatabase
 import pandas as pd
+from neo4j import GraphDatabase
 
 # Connexion à MongoDB
 client = MongoClient("mongodb+srv://mathis:HDazs1xt6hW6tcFS@projetnosql.3msce.mongodb.net/?retryWrites=true&w=majority&appName=ProjetNoSQL")
 db = client["projet"]
 collection = db["movies"]
 
+# Connexion à Neo4j
+NEO4J_URI = "neo4j+s://6b909039.databases.neo4j.io"
+NEO4J_USERNAME = "neo4j"
+NEO4J_PASSWORD = "n8x5MbiTrvmLCG3aywCNJ-10rDhcPYbs_PRzdNqx5_s"
+
+neo4j_conn = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USERNAME, NEO4J_PASSWORD))
+
+# Charger les données depuis MongoDB
 def load_data():
-    data = list(collection.find({}, {"_id": 1, "title": 1, "genre": 1, "year": 1, "rating": 1, "Metascore": 1}))
+    data = list(collection.find({}, {"_id": 1, "title": 1, "genre": 1, "year": 1, "rating": 1, "Votes": 1, "Revenue (Millions)": 1, "Director": 1, "Actors": 1}))
     return pd.DataFrame(data)
 
-st.title("🎬 Gestion des Films - NoSQL")
+# Ajouter un film et ses relations dans Neo4j
+def add_movie_to_neo4j(movie_id, title, year, votes, revenue, rating, director, actors):
+    with neo4j_conn.session() as session:
+        session.run("""
+            MERGE (m:Movie {_id: $movie_id})
+            SET m.title = $title, m.year = $year, m.votes = $votes, m.revenue = $revenue, m.rating = $rating
+        """, movie_id=movie_id, title=title, year=year, votes=votes, revenue=revenue, rating=rating)
+        
+        session.run("""
+            MERGE (d:Director {name: $director})
+            MERGE (d)-[:A_REALISE]->(m)
+        """, director=director)
 
-# 🌊 Affichage des films actuels dans MongoDB
-st.subheader("📋 Liste des Films (MongoDB)")
+        for actor in actors.split(","):
+            actor = actor.strip()
+            session.run("""
+                MERGE (a:Actor {name: $actor})
+                MERGE (a)-[:A_JOUE]->(m)
+            """, actor=actor)
+
+# Interface Streamlit
+st.title("🎬 Gestion des Films - NoSQL (MongoDB & Neo4j)")
+
+# 📊 Affichage des films
+st.subheader("📋 Liste des Films")
 df = load_data()
 st.dataframe(df)
 
-# Connexion à Neo4j
-NEO4J_URI = "neo4j+s://6b909039.databases.neo4j.io"
-NEO4J_USER = "neo4j"
-NEO4J_PASSWORD = "n8x5MbiTrvmLCG3aywCNJ-10rDhcPYbs_PRzdNqx5_s"
-
-def get_driver():
-    return GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
-
-def run_query(query, parameters=None):
-    driver = get_driver()
-    with driver.session() as session:
-        result = session.run(query, parameters or {})
-        return [record.data() for record in result]
-
-st.subheader("🎭 Films enregistrés dans Neo4j")
-query = "MATCH (m:Movie) RETURN m.title AS title, m.genre AS genre, m.year AS year LIMIT 10"
-data = run_query(query)
-
-df = pd.DataFrame(data)
-st.dataframe(df)
-
-# 📌 Ajouter un film dans MongoDB
-st.subheader("➕ Ajouter un Film (MongoDB)")
-with st.form("insert_form_mongo"):
+# 📌 Formulaire pour ajouter un film
+st.subheader("➕ Ajouter un Film")
+with st.form("insert_form"):
     col1, col2 = st.columns(2)
     with col1:
         movie_id = st.text_input("ID du Film (unique)")
         title = st.text_input("Titre")
         genre = st.text_input("Genre")
+        director = st.text_input("Réalisateur")
     with col2:
         year = st.number_input("Année", min_value=1900, max_value=2100, step=1)
         rating = st.text_input("Classification (Ex: PG, G)")
-        metascore = st.slider("Metascore", 0, 100, 50)
+        votes = st.number_input("Nombre de Votes", min_value=0, step=1)
+        revenue = st.number_input("Revenu (Millions)", min_value=0.0, step=0.1)
+
+    description = st.text_area("Description")
+    actors = st.text_area("Acteurs (séparés par des virgules)")
+    metascore = st.slider("Metascore", 0, 100, 50)
 
     submit_insert = st.form_submit_button("Ajouter")
     if submit_insert and movie_id and title:
@@ -59,49 +73,65 @@ with st.form("insert_form_mongo"):
             "_id": movie_id,
             "title": title,
             "genre": genre,
+            "Director": director,
             "year": year,
             "rating": rating,
+            "Votes": votes,
+            "Revenue (Millions)": revenue,
+            "Description": description,
+            "Actors": actors,
             "Metascore": metascore
         })
-        st.success(f"Film '{title}' ajouté ✅")
+
+        add_movie_to_neo4j(movie_id, title, year, votes, revenue, rating, director, actors)
+        
+        st.success(f"Film '{title}' ajouté à MongoDB et Neo4j ✅")
         st.experimental_rerun()
 
-# 📌 Ajouter un film dans Neo4j
-st.subheader("➕ Ajouter un Film (Neo4j)")
-with st.form("insert_form_neo4j"):
-    title = st.text_input("Titre")
-    genre = st.text_input("Genre")
-    year = st.number_input("Année", min_value=1900, max_value=2100, step=1)
-    submit_insert = st.form_submit_button("Ajouter")
-    
-    if submit_insert and title:
-        query = "CREATE (m:Movie {title: $title, genre: $genre, year: $year})"
-        run_query(query, {"title": title, "genre": genre, "year": year})
-        st.success(f"Film '{title}' ajouté ✅")
-        st.experimental_rerun()
+# 📌 Requêtes Neo4j : Trouver les films d'un acteur
+st.subheader("🔎 Trouver les films d'un acteur")
+actor_search = st.text_input("Nom de l'acteur")
+if st.button("Rechercher"):
+    with neo4j_conn.session() as session:
+        result = session.run("""
+            MATCH (a:Actor {name: $actor})-[:A_JOUE]->(m:Movie)
+            RETURN m.title
+        """, actor=actor_search)
+        
+        films = [record["m.title"] for record in result]
+        if films:
+            st.write(f"📽️ Films avec {actor_search}: {', '.join(films)}")
+        else:
+            st.warning(f"Aucun film trouvé pour {actor_search}.")
 
-# 🕊️ Mise à jour d'un film dans Neo4j
-st.subheader("✏️ Mettre à jour un Film (Neo4j)")
-with st.form("update_form_neo4j"):
-    old_title = st.text_input("Titre du Film à modifier")
-    new_genre = st.text_input("Nouveau Genre")
-    new_year = st.number_input("Nouvelle Année", min_value=1900, max_value=2100, step=1)
-    submit_update = st.form_submit_button("Mettre à jour")
-    
-    if submit_update and old_title:
-        query = "MATCH (m:Movie {title: $old_title}) SET m.genre = $new_genre, m.year = $new_year"
-        run_query(query, {"old_title": old_title, "new_genre": new_genre, "new_year": new_year})
-        st.success("Film mis à jour ✅")
-        st.experimental_rerun()
+# 📌 Requêtes Neo4j : Trouver les réalisateurs d'un film
+st.subheader("🎬 Trouver le réalisateur d'un film")
+movie_search = st.text_input("Titre du film")
+if st.button("Chercher Réalisateur"):
+    with neo4j_conn.session() as session:
+        result = session.run("""
+            MATCH (d:Director)-[:A_REALISE]->(m:Movie {title: $title})
+            RETURN d.name
+        """, title=movie_search)
+        
+        directors = [record["d.name"] for record in result]
+        if directors:
+            st.write(f"🎬 Réalisateur de {movie_search}: {', '.join(directors)}")
+        else:
+            st.warning(f"Aucun réalisateur trouvé pour {movie_search}.")
 
-# 🗑️ Supprimer un film dans Neo4j
-st.subheader("🗑️ Supprimer un Film (Neo4j)")
-with st.form("delete_form_neo4j"):
-    delete_title = st.text_input("Titre du Film à supprimer")
-    submit_delete = st.form_submit_button("Supprimer")
-    
-    if submit_delete and delete_title:
-        query = "MATCH (m:Movie {title: $delete_title}) DETACH DELETE m"
-        run_query(query, {"delete_title": delete_title})
-        st.success("Film supprimé ✅")
-        st.experimental_rerun()
+# 📌 Requêtes Neo4j : Trouver les relations entre acteurs
+st.subheader("🎭 Relations entre acteurs")
+actor1 = st.text_input("Acteur 1")
+actor2 = st.text_input("Acteur 2")
+if st.button("Trouver un lien"):
+    with neo4j_conn.session() as session:
+        result = session.run("""
+            MATCH path=shortestPath((a1:Actor {name: $actor1})-[:A_JOUE*]-(a2:Actor {name: $actor2}))
+            RETURN path
+        """, actor1=actor1, actor2=actor2)
+
+        if result.single():
+            st.success(f"🎭 Il existe une connexion entre {actor1} et {actor2} via un ou plusieurs films.")
+        else:
+            st.warning(f"Aucune connexion directe entre {actor1} et {actor2}.")
